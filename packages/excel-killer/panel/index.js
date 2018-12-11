@@ -181,16 +181,6 @@ Editor.Panel.extend({
                             this.excelRootPath = data.excelRootPath || "";
                             if (fs.existsSync(this.excelRootPath)) {
                                 this._onAnalyzeExcelDirPath(this.excelRootPath);
-                                chokidar.watch(this.excelRootPath, {
-                                    usePolling: true,
-                                    // interval: 1000,
-                                    // awaitWriteFinish: {
-                                    //     stabilityThreshold: 2000,
-                                    //     pollInterval: 100
-                                    // },
-                                }).on('all', this._watchDir.bind(this));
-                            } else {
-
                             }
                             this.jsFileName = data.jsFileName || "GameJsCfg";
                             this.jsonAllCfgFileName = data.jsonAllFileName || "GameJsonCfg";
@@ -295,6 +285,18 @@ Editor.Panel.extend({
                         this._addLog("目录不存在：" + this.excelRootPath);
                     }
                 },
+				 /**
+                 *  bug: 1.resource busy or locked 资源被锁定
+                 *        2.window-xxxxx unresponsive 窗口失去响应
+                 *  具体描述：  1.假如不小心选择了含有隐藏系统文件的更目录路径，按下导入excel目录会报错
+				 *				2.如果选择了有子目录比较深的的路径，会有点卡
+				 *       		3.跟严重的如果同时有以上2点就直接窗口无响应（直接卡死），然后只有修改代码，重启无效一样的卡死
+                 *  原因： 1.fs.statSync()读取了系统文件的属性，然而没有权限读取系统文件的属性会导致报错。
+                 *         2.readDirSync(dirPath)递归太深的子目录会卡，如果还读取了系统文件的属性，窗口还会失去响应
+                 *  解决方式：1.修改了读取文件的代码（跳过系统文件的读取）
+                 *            2.取消子目录搜索，修改递归为只循环读取一层的文件（子文件夹不读取）
+                 * 	
+                 */
                 onBtnClickSelectExcelRootPath() {
                     let res = Editor.Dialog.openFile({
                         title: "选择Excel的根目录",
@@ -303,9 +305,9 @@ Editor.Panel.extend({
                     });
                     if (res !== -1) {
                         let dir = res[0];
-                        if (dir !== this.excelRootPath) {
+                         if (dir !== this.excelRootPath) {
                             this.excelRootPath = dir;
-                            chokidar.watch(this.excelRootPath).on('all', this._watchDir.bind(this));
+                           // chokidar.watch(this.excelRootPath).on('all', this._watchDir.bind(this));
                             this._onAnalyzeExcelDirPath(dir);
                             this._saveConfig();
                         }
@@ -345,7 +347,24 @@ Editor.Panel.extend({
                         let allFileArr = [];
                         let excelFileArr = [];
                         // 获取目录下所有的文件
-                        readDirSync(dir);
+                        let dirInfo = fs.readdirSync(dir);
+                        for (let i = 0, len = dirInfo.length; i < len; i++) {
+                            let item = dirInfo[i];
+                            if (path.extname(item) == ".BIN") continue; 
+                            if (path.extname(item) == ".sys") continue;
+                            if (item == "System Volume Information") continue;
+                            let itemFullPath = path.join(dir, item);
+                            let info = fs.statSync(itemFullPath);
+                            if (info.isFile()) {
+                                let headStr = item.substr(0, 2);
+                                if (headStr === "~$") {
+                                    window.plugin._addLog("检索到excel产生的临时文件:" + itemFullPath);
+                                } else {
+                                    allFileArr.push(itemFullPath);
+                                }
+                                // this._addLog('file: ' + itemFullPath);
+                            }
+                        }
                         // 过滤出来.xlsx的文件
                         for (let k in allFileArr) {
                             let file = allFileArr[k];
@@ -395,7 +414,7 @@ Editor.Panel.extend({
                         }
                         this.excelArray = excelSheetArray;
 
-
+						/*
                         function readDirSync(dirPath) {
                             let dirInfo = fs.readdirSync(dirPath);
                             for (let i = 0; i < dirInfo.length; i++) {
@@ -416,6 +435,7 @@ Editor.Panel.extend({
                                 }
                             }
                         }
+						*/
                     }
                 },
                 onStopTouchEvent(event) {
